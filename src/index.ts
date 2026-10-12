@@ -1,0 +1,94 @@
+/**
+ * dsh-mcp-test — tool-surface snapshot and drift gate for DeepSeek Harness.
+ *
+ * Everything the model can call is a supply-chain surface: first-party tools,
+ * plugin tools, MCP tools. This plugin snapshots the full visible tool
+ * registry (name / description / parameters via `ctx.tools.schemas()`),
+ * stores a baseline, and diffs every change against it. Upgrading a plugin
+ * or MCP server that silently adds, removes, or reshapes a tool fails loud.
+ * Zero LLM calls in the trust path.
+ *
+ * Family: read-guard (what agents read) · pr-gate (what they write) ·
+ * attest (what they did) · mcp-test (what they can call).
+ *
+ * v0.1 ships the snapshot + drift pillar (mcp-test's `diff` gate applied to
+ * the whole registry); the behavioral probe pillar is on the roadmap.
+ */
+import type { Context } from '@deepseek-ai/cordis';
+import Schema from '@deepseek-ai/schemastery';
+import '@deepseek-ai/dsh-tools';
+import { diffSurfaces, summarizeDiff, type ToolSurfaceEntry } from './diff.js';
+import { loadSnapshot, saveSnapshot } from './store.js';
+
+export const name = 'dsh-mcp-test';
+export const inject = ['tools'];
+
+export interface Config {
+  /** Baseline file; committed to the repo, that IS the contract. */
+  baselinePath: string;
+  /** Re-baseline on drift instead of warning (explicit opt-in). */
+  rebaselineOnDrift: boolean;
+  /** Tool names excluded from the surface (e.g. your own dynamic tools). */
+  ignoreTools: string[];
+}
+
+export const Config: Schema<Config> = Schema.object({
+  baselinePath: Schema.string().default('.dsh-mcp-test/baseline.json').description('committed baseline file'),
+  rebaselineOnDrift: Schema.boolean().default(false).description('update the baseline instead of warning (opt-in)'),
+  ignoreTools: Schema.array(Schema.string()).default([]).description('tool names excluded from the surface'),
+});
+
+export function apply(ctx: Context, config: Config) {
+  const ignore = new Set(config.ignoreTools);
+  let lastSignature = '';
+
+  const capture = (): ToolSurfaceEntry[] =>
+    ctx.tools.schemas().map((schema) => ({
+      name: schema.name,
+      description: schema.description,
+      parameters: schema.parameters,
+    }));
+
+  async function check(): Promise<void> {
+    const current = { time: new Date().toISOString(), tools: capture() };
+    const baseline = await loadSnapshot(config.baselinePath);
+    if (baseline === null) {
+      await saveSnapshot(config.baselinePath, current.tools, current.time);
+      console.log(
+        `[dsh-mcp-test] baseline established: ${current.tools.length} tool(s) -> ${config.baselinePath} (commit it)`,
+      );
+      return;
+    }
+    const diff = diffSurfaces(baseline, current, ignore);
+    if (diff.changes.length === 0) {
+      console.log(`[dsh-mcp-test] ${summarizeDiff(diff)}`);
+      return;
+    }
+    // Identical consecutive drift states log once, not on every re-check.
+    const signature = JSON.stringify(diff.changes);
+    if (signature === lastSignature) return;
+    lastSignature = signature;
+    if (config.rebaselineOnDrift) {
+      await saveSnapshot(config.baselinePath, current.tools, current.time);
+      console.warn(`[dsh-mcp-test] rebaselined: ${summarizeDiff(diff)}`);
+      return;
+    }
+    console.warn(
+      `[dsh-mcp-test] DRIFT — ${summarizeDiff(diff)}\n` +
+        `  If this upgrade is intended, set rebaselineOnDrift: true once (or delete the baseline) to accept it.`,
+    );
+  }
+
+  // Composition order races tool registration: the first check and every
+  // registry change share one trailing debounce so bursts of registrations
+  // coalesce and the baseline is taken after the registry settles.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const schedule = (): void => {
+    clearTimeout(timer);
+    timer = setTimeout(() => void check(), 1500);
+  };
+  ctx.on('tools/change', schedule);
+  ctx.effect(() => () => clearTimeout(timer));
+  schedule();
+  console.log('[dsh-mcp-test] active: drift gate armed on tools/change');
+}

@@ -1,0 +1,4 @@
+# Dev overlay: pnpm dsh web --patch C:/Users/Admin/.zcode/workspace/default/dsh-mcp-test/cordis.dev.patch.yml
+- insert:
+    - id: dsh-mcp-test
+      name: 'C:/Users/Admin/.zcode/workspace/default/dsh-mcp-test/src/index.ts'
