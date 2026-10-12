@@ -48,16 +48,12 @@ headline feature) is on the roadmap.
 ## Install
 
 ```sh
-dsh plugin --profile default add github:zhengqiuyang/dsh-mcp-test
+dsh plugin --profile default add dsh-mcp-test
 ```
 
-git installs build from source; authorize once in the profile's
-`pnpm-workspace.yaml`:
+From npm — no build step, no `allowBuilds` authorization; git installs are equally prebuilt (`lib/` ships in the repo).
 
-```yaml
-allowBuilds:
-  dsh-mcp-test: true
-```
+
 
 ## Configure
 
