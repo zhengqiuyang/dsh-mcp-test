@@ -1,5 +1,6 @@
 # dsh-mcp-test
 
+> **If this helps you, please give it a star** — it helps others find it. Thanks!
 Tool-surface snapshot and drift gate for
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh).
 
