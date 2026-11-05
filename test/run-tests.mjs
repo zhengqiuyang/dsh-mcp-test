@@ -129,7 +129,7 @@ await test('save then load roundtrips', async () => {
   try {
     const p = join(dir, 'sub', 'baseline.json');
     await saveSnapshot(p, BASE.tools, 't0');
-    const loaded = await loadSnapshot(p);
+    const loaded = (await loadSnapshot(p)).value;
     assert.equal(loaded.time, 't0');
     // Storage is name-sorted; compare as sets.
     const byName = (arr) => Object.fromEntries(arr.map((t) => [t.name, t]));
@@ -142,7 +142,7 @@ await test('save then load roundtrips', async () => {
 });
 
 await test('missing baseline loads as null', async () => {
-  assert.equal(await loadSnapshot(join(tmpdir(), 'nope', 'x.json')), null);
+  assert.equal((await loadSnapshot(join(tmpdir(), 'nope', 'x.json'))).status, 'absent');
 });
 
 await test('tampered baseline text is detected on diff', async () => {
@@ -154,7 +154,7 @@ await test('tampered baseline text is detected on diff', async () => {
     const dbTool = raw.tools.find((t) => t.name === 'mcp__db__query');
     dbTool.parameters.sql.type = 'number'; // schema tampered on disk
     writeFileSync(p, JSON.stringify(raw));
-    const loaded = await loadSnapshot(p);
+    const loaded = (await loadSnapshot(p)).value;
     const d = diffSurfaces(loaded, BASE);
     assert.deepEqual(d.changes, [{ kind: 'changed', name: 'mcp__db__query', field: 'parameters' }]);
   } finally {
@@ -163,5 +163,16 @@ await test('tampered baseline text is detected on diff', async () => {
 });
 
 console.log('');
+
+// T10:损坏基线不被静默重建(absent 才建立,malformed 拒绝覆盖)
+await test('T10: malformed baseline refuses silent re-baseline', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mcp-t10-'));
+  const p = join(dir, 'baseline.json');
+  writeFileSync(p, '{broken json..');
+  const loaded = await loadSnapshot(p);
+  assert.equal(loaded.status, 'malformed');   // 判定为损坏,而非 absent
+  rmSync(dir, { recursive: true, force: true });
+});
+
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

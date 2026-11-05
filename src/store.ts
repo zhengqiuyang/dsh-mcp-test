@@ -17,12 +17,34 @@ export async function saveSnapshot(path: string, tools: ToolSurfaceEntry[], time
   await writeFile(path, stableText(tools, time), 'utf8');
 }
 
-export async function loadSnapshot(path: string): Promise<ToolSurfaceSnapshot | null> {
+export type SnapshotLoad =
+  | { status: 'absent' }
+  | { status: 'unreadable'; error: string }
+  | { status: 'malformed'; error: string }
+  | { status: 'ok'; value: ToolSurfaceSnapshot };
+
+/**
+ * T10: loading distinguishes absent / unreadable / malformed / ok. A damaged
+ * baseline is never silently treated as "no baseline yet" — that would reset
+ * trust-on-first-use for a surface nobody approved.
+ */
+export async function loadSnapshot(path: string): Promise<SnapshotLoad> {
+  let text: string;
   try {
-    const text = await readFile(path, 'utf8');
-    return JSON.parse(text) as ToolSurfaceSnapshot;
-  } catch {
-    return null;
+    text = await readFile(path, 'utf8');
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code ?? '';
+    if (code === 'ENOENT') return { status: 'absent' };
+    return { status: 'unreadable', error: code || (e as Error).message.slice(0, 60) };
+  }
+  try {
+    const parsed = JSON.parse(text) as ToolSurfaceSnapshot;
+    if (typeof parsed !== 'object' || parsed === null || !Array.isArray(parsed.tools)) {
+      return { status: 'malformed', error: 'missing tools array' };
+    }
+    return { status: 'ok', value: parsed };
+  } catch (e) {
+    return { status: 'malformed', error: (e as Error).message.slice(0, 60) };
   }
 }
 
